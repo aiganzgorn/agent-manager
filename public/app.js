@@ -90,9 +90,9 @@ function group(label, agents, configAgents, projectId) {
 
 function row(a, isConfig) {
   const b = document.createElement('button');
-  b.className = 'agent-row ' + (a.fields.mode || 'primary');
+  const mode = (a.fields && a.fields.mode) || 'primary';
+  b.className = 'agent-row m-' + mode;
   if (S.current && S.current.agent && S.current.agent.file === a.file && S.current.agent.id === a.id) b.classList.add('active');
-  const mode = a.fields.mode || (isConfig ? '' : 'primary');
   b.innerHTML = '<span class="dot"></span><span class="name"></span><span class="tag"></span>';
   b.querySelector('.name').textContent = a.id;
   b.querySelector('.name').title = a.fields.description || a.id;

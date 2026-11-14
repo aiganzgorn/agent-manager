@@ -16,6 +16,9 @@
 
 * { box-sizing: border-box; }
 
+/* display rules below would otherwise override the hidden attribute */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 
 body {
@@ -82,11 +85,11 @@ code { background: #120e0c; padding: 1px 5px; border-radius: 5px; color: #f3d9bf
   padding: 7px 9px; cursor: pointer; font-size: 13.5px;
 }
 .agent-row:hover { background: #241c17; }
-.agent-row.active { background: #2d221b; border-color: #47362b; }
+.agent-row.active { background: #2d221b; border-color: #47362b; box-shadow: inset 3px 0 0 var(--accent); }
 .agent-row .dot { width: 7px; height: 7px; border-radius: 50%; background: #59463a; flex: none; }
-.agent-row.subagent .dot { background: #7fb8c9; }
-.agent-row.primary .dot { background: var(--accent); }
-.agent-row.all .dot { background: var(--ok); }
+.agent-row.m-subagent .dot { background: #7fb8c9; }
+.agent-row.m-primary .dot { background: var(--accent); }
+.agent-row.m-all .dot { background: var(--ok); }
 .agent-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-row .tag { margin-left: auto; font-size: 10px; color: var(--muted); }
 .agent-row .tag.v1 { color: var(--warn); }
