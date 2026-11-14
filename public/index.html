@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Агенты opencode</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="paw">🐾</span>
+      <div>
+        <div class="brand-title">Агенты opencode</div>
+        <div class="brand-sub" id="scopeSub">читает те же файлы, что opencode</div>
+      </div>
+    </div>
+
+    <div class="rootbar">
+      <input id="rootInput" spellcheck="false" title="Папка, внутри которой искать проекты с .opencode">
+      <button id="rescanBtn" class="ghost" title="Пересканировать">↻</button>
+    </div>
+
+    <div id="tree" class="tree"></div>
+
+    <div class="sidebar-foot">
+      <button id="builtinsBtn" class="ghost wide">Встроенные агенты</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="empty" class="empty">
+      <div class="empty-card">
+        <h2>Выбери агента слева</h2>
+        <p>Или создай нового — кнопка <b>+ агент</b> в нужной группе.</p>
+        <p class="muted">Правки сохраняются прямо в файлы, которые читает opencode. Перезапуск не нужен: он следит за файлами. Если в TUI что-то не подхватилось — <code>/reload</code>.</p>
+      </div>
+    </div>
+
+    <section id="editor" class="editor" hidden>
+      <header class="editor-head">
+        <div class="head-line">
+          <h1 id="agentTitle">Агент</h1>
+          <span id="agentBadges" class="badges"></span>
+          <span class="grow"></span>
+          <span id="dirtyDot" class="dirty" title="Есть несохранённые правки"></span>
+          <button id="previewBtn" class="ghost">Показать файл</button>
+          <button id="saveBtn" class="primary">Сохранить</button>
+        </div>
+        <div class="pathline"><code id="agentPath"></code><button id="copyPath" class="ghost tiny" title="Скопировать путь">⧉</button></div>
+        <div id="banner" class="banner" hidden></div>
+      </header>
+
+      <div class="editor-body">
+        <div class="form-col">
+
+          <div class="field" id="idField" hidden>
+            <label for="f_id">Имя агента (id)</label>
+            <input id="f_id" spellcheck="false" placeholder="reviewer">
+            <div class="hint">Строчные латинские буквы, цифры, <code>-</code> <code>_</code> <code>.</code>. Станет именем файла и id агента.</div>
+          </div>
+
+          <div class="field">
+            <label for="f_description">Описание</label>
+            <textarea id="f_description" rows="2" placeholder="Что делает агент и когда его звать"></textarea>
+            <div class="hint">Для субагента это единственное, что видит основная модель при выборе, кого запустить. Пиши предметно: что делает и по какой просьбе.</div>
+          </div>
+
+          <div class="row2">
+            <div class="field">
+              <label for="f_mode">Режим</label>
+              <select id="f_mode">
+                <option value="primary">primary — основной агент сессии</option>
+                <option value="subagent">subagent — вызывается субагентом</option>
+                <option value="all">all — и то, и другое</option>
+              </select>
+              <div class="hint">У нового агента по умолчанию <code>primary</code>. Субагент живёт в дочерней сессии со своим контекстом.</div>
+            </div>
+            <div class="field">
+              <label for="f_model">Модель</label>
+              <input id="f_model" spellcheck="false" placeholder="provider/model или пусто">
+              <div class="hint">Формат <code>provider/model</code>, можно вариант: <code>anthropic/claude-sonnet-5-5#high</code>. Пусто — субагент наследует модель родителя.</div>
+            </div>
+          </div>
+
+          <div class="row3">
+            <div class="field">
+              <label for="f_steps">Лимит шагов</label>
+              <input id="f_steps" type="number" min="1" placeholder="без лимита">
+            </div>
+            <div class="field">
+              <label for="f_color">Цвет</label>
+              <div class="colorwrap">
+                <input id="f_color" type="color" value="#7fb069">
+                <input id="f_colorText" spellcheck="false" placeholder="#ff6b6b">
+              </div>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <label class="check"><input id="f_hidden" type="checkbox"> hidden — скрыть из списков</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Права доступа <span class="muted">(permissions)</span></label>
+            <div id="perms" class="perms"></div>
+            <button id="addPerm" class="ghost small">+ правило</button>
+            <div class="hint">Правила проверяются по порядку, побеждает последнее совпавшее. Сначала широкий запрет, следом исключения. Экшены: <code>shell</code>, <code>edit</code>, <code>read</code>, <code>glob</code>, <code>grep</code>, <code>webfetch</code>, <code>websearch</code>, <code>skill</code>, <code>subagent</code>.</div>
+          </div>
+
+          <div class="field">
+            <label for="f_prompt">Системный промпт <span class="muted">(тело файла)</span></label>
+            <textarea id="f_prompt" class="mono" rows="14" placeholder="Инструкции для агента…"></textarea>
+            <div class="hint">В markdown-агенте это просто тело файла ниже <code>---</code>. Непустой промпт заменяет базовый промпт провайдера.</div>
+          </div>
+
+          <details id="extraBox" class="extra" hidden>
+            <summary>Прочие поля в файле — сохраняются как есть</summary>
+            <pre id="f_extra"></pre>
+          </details>
+        </div>
+
+        <aside class="help">
+          <h3>Шпаргалка</h3>
+
+          <details open>
+            <summary>Куда сохраняется</summary>
+            <p><b>Глобально:</b> <code>~/.config/opencode/agents/имя.md</code> — работает во всех проектах.</p>
+            <p><b>Проект:</b> <code>&lt;проект&gt;/.opencode/agents/имя.md</code> — только в этом проекте.</p>
+            <p>Проектный конфиг перекрывает глобальный; глобальный — ниже по приоритету.</p>
+          </details>
+
+          <details>
+            <summary>Когда перезагружать</summary>
+            <p>Не нужно. opencode следит за файлами конфигурации и сам перечитывает агентов после сохранения.</p>
+            <p>Если в TUI всё ещё старый агент — набери <code>/reload</code>. Перезапуск сервиса нужен только если он завис.</p>
+          </details>
+
+          <details>
+            <summary>Как позвать субагента</summary>
+            <p>Из основной сессии: «используй субагента <code>имя</code> для …». Модель видит список субагентов, их id и <code>description</code>.</p>
+            <p>Разрешить/запретить запуск можно правом <code>subagent</code> с ресурсом — id агента.</p>
+          </details>
+
+          <details>
+            <summary>Про V1-поля</summary>
+            <p>Если в файле есть <code>permission</code>, <code>tools</code>, <code>temperature</code>, <code>maxSteps</code> — это старый формат. Приложение их не трогает и сохраняет дословно, но V2 их не рекомендует: права задавай через <code>permissions</code>.</p>
+          </details>
+
+          <details>
+            <summary>Встроенные агенты</summary>
+            <p><code>build</code>, <code>plan</code>, <code>general</code>, <code>explore</code> встроены. Их можно переопределить, описав агента с тем же id в <code>opencode.json</code> — файлы рядом с ними не спорят.</p>
+          </details>
+        </aside>
+      </div>
+
+      <div id="preview" class="preview" hidden>
+        <div class="preview-head"><span>Так будет выглядеть файл</span><button id="closePreview" class="ghost tiny">закрыть</button></div>
+        <pre id="previewText"></pre>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="toast" class="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
