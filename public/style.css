@@ -195,6 +195,27 @@ button.ghost.wide { width: 100%; }
 .extra summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .extra pre { margin: 8px 0 0; white-space: pre-wrap; color: #c8b3a4; font-size: 12px; }
 
+/* ---- built-ins / resolved agents ---- */
+
+.cards { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.section-title { margin: 22px 0 2px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.section-note { font-size: 12px; color: #8b7970; margin: 4px 0 0; }
+
+.card { background: #1a1512; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.card h3 { margin: 0; font-size: 15px; font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.card .desc { color: #cbb9ac; font-size: 13px; margin: 8px 0 10px; }
+.card .prompt {
+  max-height: 280px; overflow: auto; margin: 0;
+  background: #0f0c0a; border: 1px solid #2b221c; border-radius: 9px;
+  padding: 10px 12px; white-space: pre-wrap; font-size: 12px; color: #e6d6c8;
+}
+.card .no-prompt { color: #ac9a8d; font-size: 12.5px; background: #191411; border: 1px dashed #3d2f26; border-radius: 9px; padding: 10px 12px; }
+.card .rules { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.card .rule { font-size: 11px; background: #120e0c; border: 1px solid #2c221c; border-radius: 6px; padding: 2px 6px; color: #b3a094; }
+.card .rule.deny { color: #e0a0a0; border-color: #4a2c2c; }
+.card .rule.ask { color: #e0c98a; border-color: #4a412c; }
+.card .card-actions { display: flex; gap: 6px; margin-left: auto; }
+
 .preview {
   position: fixed; right: 24px; bottom: 24px; width: min(640px, calc(100vw - 48px)); max-height: 60vh;
   display: flex; flex-direction: column;

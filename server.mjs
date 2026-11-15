@@ -15,13 +15,6 @@ const HOME = os.homedir();
 const GLOBAL = path.join(HOME, '.config', 'opencode');
 const ROOT_DEFAULT = path.resolve(process.argv[2] || process.cwd());
 
-const BUILTINS = [
-  { id: 'build', mode: 'primary', description: 'Основной агент: пишет код, правит файлы.' },
-  { id: 'plan', mode: 'primary', description: 'Исследует и планирует, не трогая файлы проекта.' },
-  { id: 'general', mode: 'subagent', description: 'Многошаговые задачи и исследование, без своих субагентов.' },
-  { id: 'explore', mode: 'subagent', description: 'Поиск и чтение кода/веба без правок.' },
-];
-
 // ---- discovery -------------------------------------------------------------
 
 function isDir(p) {
@@ -170,7 +163,6 @@ function buildState(root) {
     globalConfigAgents: configAgents(GLOBAL),
     configAgents: uniqueConfig,
     projects,
-    builtins: BUILTINS,
   };
 }
 
@@ -315,6 +307,87 @@ function saveAgent(payload, create) {
   return { file };
 }
 
+// Resolved agents straight from opencode: merged config, built-in defaults and
+// the effective system prompt. Cached, because each call spawns the CLI.
+// The CLI drops the tail of large output when stdout is a pipe (v2.1.4), so it
+// writes to a temp file instead: a regular file is written whole.
+let resolvedCache = { at: 0, agents: null };
+
+function resolvedAgents(attempt) {
+  attempt = attempt || 1;
+  if (resolvedCache.agents && Date.now() - resolvedCache.at < 60000) {
+    return Promise.resolve({ agents: resolvedCache.agents });
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const outFile = path.join(os.tmpdir(), 'agent-manager-resolved-' + process.pid + '-' + attempt + '.json');
+    let fd;
+    try {
+      fd = fs.openSync(outFile, 'w');
+    } catch (e) {
+      return done({ error: 'Не открылся временный файл: ' + e.message });
+    }
+    const finish = () => {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+      let text = '';
+      try {
+        text = fs.readFileSync(outFile, 'utf8');
+      } catch {}
+      try {
+        fs.unlinkSync(outFile);
+      } catch {}
+      return text;
+    };
+
+    let child;
+    try {
+      child = spawn(process.env.OPENCODE_BIN || 'opencode', ['api', 'get', '/api/agent'], { stdio: ['ignore', fd, 'pipe'] });
+    } catch (e) {
+      finish();
+      return done({ error: 'opencode не запускается: ' + e.message });
+    }
+
+    let err = '';
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+      finish();
+      done({ error: 'opencode api не ответил за 20 секунд.' });
+    }, 20000);
+
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      finish();
+      done({ error: 'opencode CLI не найден: ' + e.message + '. Запусти сервер из терминала, где opencode в PATH.' });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const text = finish();
+      if (code !== 0) return done({ error: err.trim() || 'opencode api завершился с кодом ' + code });
+      try {
+        const parsed = JSON.parse(text);
+        const agents = parsed.data || parsed;
+        if (!Array.isArray(agents)) throw new Error('неожиданный ответ');
+        resolvedCache = { at: Date.now(), agents: agents };
+        done({ agents: agents });
+      } catch (e) {
+        // the first call can come back empty while the service boots
+        if (attempt < 2) return done(resolvedAgents(attempt + 1));
+        done({ error: 'Не разобрала ответ opencode: ' + e.message });
+      }
+    });
+  });
+}
+
 function err(code, message) {
   const e = new Error(message);
   e.status = code;
@@ -338,6 +411,10 @@ const server = http.createServer(async (req, res) => {
         if (insideAny(file, dirs) && fs.existsSync(file)) extra = parseAgentFile(fs.readFileSync(file, 'utf8')).extra;
       }
       return send(res, 200, { text: stringifyAgentFile(payload.fields || {}, extra, payload.prompt || '') });
+    }
+    if (url.pathname === '/api/resolved') {
+      if (url.searchParams.get('fresh')) resolvedCache = { at: 0, agents: null };
+      return send(res, 200, await resolvedAgents());
     }
     if (url.pathname === '/api/save' && req.method === 'POST') {
       return send(res, 200, saveAgent(await readBody(req), false));

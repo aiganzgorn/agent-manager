@@ -109,8 +109,14 @@ function row(a, isConfig) {
 
 // ---- editor ----------------------------------------------------------------
 
+function hideBuiltins() {
+  const panel = $('builtinsPanel');
+  if (panel) panel.hidden = true;
+}
+
 function openAgent(agent) {
   if (!guardDirty()) return;
+  hideBuiltins();
   S.current = { agent: agent, isNew: false, projectId: agent.projectId };
   $('empty').hidden = true;
   $('editor').hidden = false;
@@ -146,6 +152,7 @@ function openAgent(agent) {
 
 function openConfigAgent(a) {
   if (!guardDirty()) return;
+  hideBuiltins();
   S.current = { agent: a, isNew: false, config: true };
   $('empty').hidden = true;
   $('editor').hidden = false;
@@ -160,6 +167,7 @@ function openConfigAgent(a) {
 
 function startNew(projectId) {
   if (!guardDirty()) return;
+  hideBuiltins();
   S.current = { agent: { id: '', fields: {}, prompt: '' }, isNew: true, projectId };
   $('empty').hidden = true;
   $('editor').hidden = false;
@@ -360,39 +368,171 @@ function banner(text, kind) {
 
 // ---- builtins --------------------------------------------------------------
 
+const CORE_IDS = ['build', 'plan'];
+const CORE_SUBS = ['general', 'explore'];
+
 function showBuiltins() {
   if (!guardDirty()) return;
   S.current = null;
   $('empty').hidden = true;
   $('editor').hidden = true;
-  const main = document.querySelector('.main');
+
   let panel = $('builtinsPanel');
   if (!panel) {
     panel = document.createElement('section');
     panel.id = 'builtinsPanel';
     panel.className = 'editor';
-    main.appendChild(panel);
+    document.querySelector('.main').appendChild(panel);
   }
   panel.hidden = false;
-  panel.innerHTML = '<div class="editor-head"><div class="head-line"><h1>Встроенные агенты</h1></div></div>';
-  const list = document.createElement('div');
-  list.className = 'editor-body';
-  list.style.gridTemplateColumns = '1fr';
-  for (const b of S.state ? S.state.builtins : []) {
-    const card = document.createElement('div');
-    card.className = 'help';
-    card.style.position = 'static';
-    card.innerHTML = '<h3><code>' + b.id + '</code> <span class="muted">· ' + b.mode + '</span></h3><p>' + b.description + '</p>';
-    list.appendChild(card);
-  }
-  const note = document.createElement('div');
-  note.className = 'help';
-  note.style.position = 'static';
-  note.innerHTML = '<h3>Как их менять</h3><p>Встроенных агентов нельзя редактировать файлом. Чтобы поменять поведение — добавь агента с тем же id в <code>opencode.json</code> (ключ <code>agents</code>); поля сольются с встроенным.</p>';
-  list.appendChild(note);
-  panel.appendChild(list);
+  panel.innerHTML =
+    '<header class="editor-head"><div class="head-line"><h1>Как opencode видит агентов</h1><span class="grow"></span>' +
+    '<button id="reloadResolved" class="ghost">Перечитать</button></div>' +
+    '<div class="pathline"><code>источник: opencode api get /api/agent — собранные агенты, их промпты и итоговые права</code></div></header>' +
+    '<div id="builtinList" class="cards"><div class="no-prompt">Читаю у opencode…</div></div>';
+  $('reloadResolved').onclick = () => loadResolved(true);
   renderTree();
+  loadResolved(true);
 }
+
+async function loadResolved(fresh) {
+  const list = $('builtinList');
+  if (!list) return;
+  list.innerHTML = '<div class="no-prompt">Читаю у opencode…</div>';
+  let data;
+  try {
+    data = await api('/api/resolved' + (fresh ? '?fresh=1' : ''));
+  } catch (e) {
+    data = { error: e.message };
+  }
+  if (data.error) {
+    list.innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'no-prompt';
+    box.style.color = '#e0a0a0';
+    box.textContent = 'Не получилось спросить opencode: ' + data.error;
+    list.appendChild(box);
+    return;
+  }
+  renderResolved(list, data.agents || []);
+}
+
+function renderResolved(list, agents) {
+  list.innerHTML = '';
+  const core = agents.filter((a) => CORE_IDS.indexOf(a.id) >= 0);
+  const coreSubs = agents.filter((a) => CORE_SUBS.indexOf(a.id) >= 0);
+  const hidden = agents.filter((a) => a.hidden && CORE_IDS.indexOf(a.id) < 0 && CORE_SUBS.indexOf(a.id) < 0);
+  const custom = agents.filter((a) => !a.hidden && CORE_IDS.indexOf(a.id) < 0 && CORE_SUBS.indexOf(a.id) < 0);
+
+  const intro = document.createElement('div');
+  intro.className = 'no-prompt';
+  intro.innerHTML =
+    'Агент — это описание, системный промпт, модель и правила. Встроенные заданы в самом opencode, свои — файлами <code>.md</code>. ' +
+    'Здесь показано то, что opencode собрал на самом деле: файлы, <code>opencode.json</code> и встроенные значения уже слиты.';
+  list.appendChild(intro);
+
+  addSection(list, 'Основные агенты', 'Работают как основной агент сессии. Промпт у них общий — из харнесса, а не из конфига.', core);
+  addSection(list, 'Встроенные субагенты', 'Их вызывает основная модель через инструмент subagent.', coreSubs);
+  addSection(list, 'Служебные и скрытые', 'hidden: true — в списках не видны, но участвуют в работе (сжатие контекста, заголовки).', hidden);
+  addSection(list, 'Твои агенты', 'Файлы и настройки из конфига — в том виде, в каком их получит модель.', custom);
+}
+
+function addSection(list, title, note, agents) {
+  if (!agents.length) return;
+  const h = document.createElement('div');
+  h.className = 'section-title';
+  h.textContent = title;
+  list.appendChild(h);
+  const p = document.createElement('p');
+  p.className = 'section-note';
+  p.textContent = note;
+  list.appendChild(p);
+  for (const a of agents) list.appendChild(agentCard(a));
+}
+
+function agentCard(a) {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const head = document.createElement('h3');
+  const name = document.createElement('code');
+  name.textContent = a.id;
+  head.appendChild(name);
+  const mode = document.createElement('span');
+  mode.className = 'badge';
+  mode.textContent = a.mode || 'primary';
+  head.appendChild(mode);
+  if (a.hidden) {
+    const hid = document.createElement('span');
+    hid.className = 'badge v1';
+    hid.textContent = 'hidden';
+    head.appendChild(hid);
+  }
+  if (a.model) {
+    const m = document.createElement('span');
+    m.className = 'badge';
+    m.textContent = typeof a.model === 'string' ? a.model : (a.model.providerID || '') + '/' + (a.model.modelID || a.model.model || '');
+    head.appendChild(m);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'card-actions';
+  if (a.system) {
+    const copy = document.createElement('button');
+    copy.className = 'ghost tiny';
+    copy.textContent = 'скопировать промпт';
+    copy.onclick = () =>
+      navigator.clipboard.writeText(a.system).then(
+        () => toast('Промпт скопирован'),
+        () => toast('Не вышло скопировать', true)
+      );
+    actions.appendChild(copy);
+  }
+  head.appendChild(actions);
+  card.appendChild(head);
+
+  if (a.description) {
+    const d = document.createElement('p');
+    d.className = 'desc';
+    d.textContent = a.description;
+    card.appendChild(d);
+  }
+
+  if (a.system) {
+    const pre = document.createElement('pre');
+    pre.className = 'prompt';
+    pre.textContent = a.system;
+    card.appendChild(pre);
+  } else {
+    const no = document.createElement('div');
+    no.className = 'no-prompt';
+    no.textContent =
+      'Своего системного промпта нет. opencode подставляет такому агенту общий базовый промпт харнесса (он вшит в бинарь opencode) плюс напоминания про активный режим. ' +
+      'В конфиге это поле пустое, так что переопределять тут нечего — свои инструкции добавляются как system / тело .md-файла.';
+    card.appendChild(no);
+  }
+
+  const rules = Array.isArray(a.permissions) ? a.permissions : (a.permissions && a.permissions.rules) || [];
+  if (rules.length) {
+    const box = document.createElement('div');
+    box.className = 'rules';
+    for (const r of rules.slice(0, 8)) {
+      const chip = document.createElement('span');
+      chip.className = 'rule ' + (r.effect || '');
+      chip.textContent = (r.action || '*') + ': ' + (r.resource || '*') + ' → ' + (r.effect || 'allow');
+      box.appendChild(chip);
+    }
+    if (rules.length > 8) {
+      const more = document.createElement('span');
+      more.className = 'rule';
+      more.textContent = '+' + (rules.length - 8) + ' ещё';
+      box.appendChild(more);
+    }
+    card.appendChild(box);
+  }
+
+  return card;
+}
+
 
 // ---- wiring ----------------------------------------------------------------
 
