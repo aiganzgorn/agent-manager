@@ -17,6 +17,13 @@
       </div>
     </div>
 
+    <nav class="tabs">
+      <button class="tab active" data-tab="agents">Агенты</button>
+      <button class="tab" data-tab="skills">Скиллы</button>
+      <button class="tab" data-tab="plugins">Плагины</button>
+      <button class="tab" data-tab="settings">Настройки</button>
+    </nav>
+
     <div class="rootbar">
       <input id="rootInput" spellcheck="false" title="Папка, внутри которой искать проекты с .opencode">
       <button id="rescanBtn" class="ghost" title="Пересканировать">↻</button>
@@ -37,6 +44,8 @@
         <p class="muted">Правки сохраняются прямо в файлы, которые читает opencode. Перезапуск не нужен: он следит за файлами. Если в TUI что-то не подхватилось — <code>/reload</code>.</p>
       </div>
     </div>
+
+    <section id="panel" class="editor" hidden></section>
 
     <section id="editor" class="editor" hidden>
       <header class="editor-head">

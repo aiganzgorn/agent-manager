@@ -2,6 +2,9 @@ const $ = (id) => document.getElementById(id);
 
 const S = {
   root: new URLSearchParams(location.search).get('root') || '',
+  tab: 'agents',
+  plugins: null,
+  settings: null,
   state: null,
   current: null, // { agent, isNew, projectId }
   dirty: false,
@@ -35,7 +38,8 @@ async function loadState() {
     S.root = S.state.root;
     $('rootInput').value = S.state.root;
     $('scopeSub').textContent = 'глобально: ' + S.state.globalDir.replace(/^\/Users\/[^/]+/, '~');
-    renderTree();
+    renderSidebar();
+    if (S.tab !== 'agents') renderPanel(S.tab);
   } catch (e) {
     toast(e.message, true);
   }
@@ -534,6 +538,274 @@ function agentCard(a) {
 }
 
 
+// ---- tabs, skills, plugins, settings ---------------------------------------
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+
+function panelHeader(title, sub) {
+  const head = el('header', 'editor-head');
+  const line = el('div', 'head-line');
+  line.appendChild(el('h1', null, title));
+  head.appendChild(line);
+  if (sub) {
+    const p = el('div', 'pathline');
+    p.appendChild(el('code', null, sub));
+    head.appendChild(p);
+  }
+  return head;
+}
+
+function noteCard(html) {
+  const div = el('div', 'no-prompt');
+  div.innerHTML = html;
+  return div;
+}
+
+const TAB_TITLES = { skills: 'Скиллы', plugins: 'Плагины', settings: 'Настройки' };
+
+function setTab(tab) {
+  if (tab === S.tab) return;
+  if (tab !== 'agents' && !guardDirty()) return;
+  S.tab = tab;
+  for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === tab);
+  $('builtinsBtn').hidden = tab !== 'agents';
+  if (tab === 'agents') {
+    const panel = $('panel');
+    if (panel) panel.hidden = true;
+    $('editor').hidden = !S.current;
+    $('empty').hidden = !!S.current;
+    renderTree();
+    return;
+  }
+  $('editor').hidden = true;
+  $('empty').hidden = true;
+  const panel = $('panel');
+  panel.hidden = false;
+  renderSidebar();
+  renderPanel(tab);
+}
+
+function renderSidebar() {
+  if (S.tab === 'agents') return renderTree();
+  const tree = $('tree');
+  tree.innerHTML = '';
+  const items = [];
+  if (S.tab === 'skills' && S.state) {
+    for (const sk of S.state.skills.global) items.push({ label: sk.id, tag: 'global', target: 'skill-' + sk.dir });
+    for (const p of S.state.skills.projects) {
+      for (const sk of p.skills) items.push({ label: sk.id, tag: p.label, target: 'skill-' + p.label + '-' + sk.dir });
+    }
+    if (!items.length) items.push({ label: 'скиллов нет', target: null });
+  }
+  if (S.tab === 'plugins') {
+    for (const p of S.plugins ? S.plugins.plugins : []) items.push({ label: p.name, tag: p.installed ? p.installed.version : 'нет', target: 'plugin-' + p.name });
+    if (!items.length) items.push({ label: S.plugins ? 'плагинов нет' : 'читаю…', target: null });
+  }
+  if (S.tab === 'settings') {
+    for (const f of S.settings ? S.settings.files : []) {
+      const parts = f.path.split('/').filter(Boolean);
+      items.push({
+        label: f.path.split('/').pop(),
+        tag: f.scope === 'global' ? 'global' : parts[parts.length - 2],
+        target: 'cfg-' + encodeURIComponent(f.path),
+      });
+    }
+    if (!items.length) items.push({ label: S.settings ? 'конфигов нет' : 'читаю…', target: null });
+  }
+
+  for (const it of items) {
+    const b = el('button', 'agent-row');
+    b.appendChild(el('span', 'dot'));
+    b.appendChild(el('span', 'name', it.label));
+    b.appendChild(el('span', 'tag', it.tag || ''));
+    if (it.target) {
+      b.onclick = () => {
+        const target = document.getElementById(it.target);
+        if (target) {
+          for (const r of document.querySelectorAll('.agent-row.active')) r.classList.remove('active');
+          b.classList.add('active');
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      };
+    }
+    tree.appendChild(b);
+  }
+}
+
+function renderPanel(tab) {
+  const panel = $('panel');
+  panel.innerHTML = '';
+  panel.appendChild(panelHeader(TAB_TITLES[tab]));
+  if (tab === 'skills') return renderSkills(panel);
+  if (tab === 'plugins') return renderPlugins(panel);
+  if (tab === 'settings') return renderSettings(panel);
+}
+
+function skillCard(sk, anchorId) {
+  const card = el('div', 'card');
+  if (anchorId) card.id = anchorId;
+  const head = el('h3');
+  head.appendChild(el('code', null, sk.id));
+  head.appendChild(el('span', 'badge ' + (sk.scope === 'global' ? 'global' : 'project'), sk.scope === 'global' ? 'глобальный' : 'проект'));
+  if (sk.userInvocable) head.appendChild(el('span', 'badge', 'можно вызвать как команду'));
+  const actions = el('div', 'card-actions');
+  const copy = el('button', 'ghost tiny', 'скопировать путь');
+  copy.onclick = () => navigator.clipboard.writeText(sk.file).then(() => toast('Путь скопирован'), () => toast(sk.file));
+  actions.appendChild(copy);
+  head.appendChild(actions);
+  card.appendChild(head);
+  if (sk.description) card.appendChild(el('p', 'desc', sk.description));
+  card.appendChild(el('div', 'no-prompt', 'Файл: ' + sk.file + (sk.files.length ? '  ·  рядом: ' + sk.files.join(', ') : '')));
+  if (sk.allowedTools) card.appendChild(el('p', 'section-note', 'allowed-tools: ' + sk.allowedTools));
+  if (sk.body) {
+    const det = el('details', 'extra');
+    det.appendChild(el('summary', null, 'Инструкции скилла (' + sk.body.length + ' симв.)'));
+    const pre = el('pre', null, sk.body);
+    pre.style.maxHeight = '320px';
+    pre.style.overflow = 'auto';
+    det.appendChild(pre);
+    card.appendChild(det);
+  }
+  return card;
+}
+
+function renderSkills(panel) {
+  const skills = S.state ? S.state.skills : { global: [], projects: [] };
+  panel.appendChild(
+    noteCard(
+      'Скилл — папка с <code>SKILL.md</code>: имя, описание и инструкции. opencode держит их в контексте и подгружает по описанию, ' +
+        'когда задача совпадает. Свои скиллы плагинов (например superpowers) живут внутри пакетов плагинов, а не в этих папках.'
+    )
+  );
+  const body = el('div', 'cards');
+  if (skills.global.length) {
+    body.appendChild(el('div', 'section-title', 'Глобальные'));
+    for (const sk of skills.global) body.appendChild(skillCard(sk, 'skill-' + sk.dir));
+  }
+  for (const p of skills.projects) {
+    if (!p.skills.length) continue;
+    body.appendChild(el('div', 'section-title', p.label));
+    for (const sk of p.skills) body.appendChild(skillCard(sk, 'skill-' + p.label + '-' + sk.dir));
+  }
+  if (!skills.global.length && !skills.projects.some((p) => p.skills.length)) {
+    body.appendChild(noteCard('Скиллов не нашлось. Положи папку со <code>SKILL.md</code> в <code>~/.config/opencode/skills/</code>.'));
+  }
+  panel.appendChild(body);
+}
+
+async function renderPlugins(panel) {
+  panel.appendChild(noteCard('Плагины подключаются ключом <code>plugin</code> в <code>opencode.json</code> и ставятся в <code>~/.cache/opencode/packages</code>.'));
+  const box = el('div', 'cards');
+  box.appendChild(noteCard('Читаю…'));
+  panel.appendChild(box);
+  try {
+    S.plugins = await api('/api/plugins?root=' + encodeURIComponent(S.root));
+  } catch (e) {
+    box.innerHTML = '';
+    box.appendChild(noteCard('Не получилось прочитать плагины: ' + e.message));
+    return;
+  }
+  box.innerHTML = '';
+  if (!S.plugins.plugins.length) box.appendChild(noteCard('В конфиге нет ни одного плагина.'));
+  for (const p of S.plugins.plugins) {
+    const card = el('div', 'card');
+    card.id = 'plugin-' + p.name;
+    const head = el('h3');
+    head.appendChild(el('code', null, p.name));
+    head.appendChild(el('span', p.installed ? 'badge' : 'badge v1', p.installed ? (p.installed.version || 'установлен') : 'не установлен'));
+    head.appendChild(el('div', 'card-actions'));
+    card.appendChild(head);
+    if (p.installed && p.installed.description) card.appendChild(el('p', 'desc', p.installed.description));
+    card.appendChild(el('div', 'no-prompt', 'В конфиге: ' + p.spec + (p.installed ? '\nУстановлен: ' + p.installed.dir : '')));
+    box.appendChild(card);
+  }
+  const foot = el('div', 'no-prompt');
+  foot.innerHTML = 'Пакеты: <code>' + S.plugins.packagesDir + '</code>. Версия — из <code>package.json</code> установленного пакета; при обновлении плагина opencode сам подхватит новую.';
+  box.appendChild(foot);
+  renderSidebar();
+}
+
+async function renderSettings(panel) {
+  const box = el('div', 'cards');
+  box.appendChild(noteCard('Читаю…'));
+  panel.appendChild(box);
+  try {
+    S.settings = await api('/api/settings?root=' + encodeURIComponent(S.root));
+  } catch (e) {
+    box.innerHTML = '';
+    box.appendChild(noteCard('Не получилось прочитать настройки: ' + e.message));
+    return;
+  }
+  box.innerHTML = '';
+  const env = el('div', 'no-prompt');
+  env.innerHTML =
+    'opencode <b>' + (S.settings.version || 'версия неизвестна') + '</b> · глобальный конфиг: <code>' + S.settings.globalDir + '</code><br>' +
+    'Правки применяются без перезапуска: opencode следит за файлом. Меняются только простые значения (строка, число, флаг) — вложенные объекты и массивы правь в файле, чтобы не потерять комментарии.';
+  box.appendChild(env);
+
+  for (const f of S.settings.files) {
+    const card = el('div', 'card');
+    card.id = 'cfg-' + encodeURIComponent(f.path);
+    const head = el('h3');
+    head.appendChild(el('code', null, f.path.split('/').slice(-2).join('/')));
+    head.appendChild(el('span', 'badge ' + (f.scope === 'global' ? 'global' : 'project'), f.scope === 'global' ? 'глобальный' : 'проект'));
+    const actions = el('div', 'card-actions');
+    const copy = el('button', 'ghost tiny', 'скопировать путь');
+    copy.onclick = () => navigator.clipboard.writeText(f.path).then(() => toast('Путь скопирован'), () => toast(f.path));
+    actions.appendChild(copy);
+    head.appendChild(actions);
+    card.appendChild(head);
+    if (f.error) card.appendChild(noteCard('Файл не парсится: ' + f.error));
+
+    for (const e of f.entries) {
+      const row = el('div', 'kv');
+      const k = el('div', 'k', e.key);
+      k.appendChild(el('small', null, e.kind));
+      row.appendChild(k);
+      if (e.kind === 'complex') {
+        const ro = el('div', 'ro');
+        ro.appendChild(el('pre', null, e.value.length > 400 ? e.value.slice(0, 400) + ' …' : e.value));
+        row.appendChild(ro);
+        card.appendChild(row);
+        continue;
+      }
+      const input = el('input');
+      input.value = e.parsed === null ? 'null' : String(e.parsed);
+      const btn = el('button', 'ghost small', 'сохранить');
+      btn.disabled = true;
+      input.addEventListener('input', () => (btn.disabled = input.value === String(e.parsed)));
+      const commit = async () => {
+        btn.disabled = true;
+        let value = input.value;
+        if (e.kind === 'number') value = Number(value);
+        else if (e.kind === 'boolean') value = value === 'true';
+        else if (e.kind === 'null') value = null;
+        try {
+          await api('/api/settings/set', { root: S.root, file: f.path, key: e.key, value: value });
+          row.classList.add('saved');
+          toast('Сохранено: ' + e.key + '. opencode применит без перезапуска.');
+        } catch (err) {
+          toast(err.message, true);
+        }
+      };
+      btn.onclick = commit;
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') commit();
+      });
+      row.appendChild(input);
+      row.appendChild(btn);
+      card.appendChild(row);
+    }
+    box.appendChild(card);
+  }
+  renderSidebar();
+}
+
 // ---- wiring ----------------------------------------------------------------
 
 const formRoot = document.querySelector('.editor-body');
@@ -576,6 +848,8 @@ $('copyPath').onclick = () => {
 
 $('rescanBtn').onclick = () => {
   S.root = $('rootInput').value.trim();
+  S.plugins = null;
+  S.settings = null;
   loadState();
 };
 $('rootInput').addEventListener('keydown', (e) => {
@@ -586,6 +860,8 @@ $('rootInput').addEventListener('keydown', (e) => {
 });
 
 $('builtinsBtn').onclick = showBuiltins;
+
+for (const b of document.querySelectorAll('.tab')) b.onclick = () => setTab(b.dataset.tab);
 
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 's') {

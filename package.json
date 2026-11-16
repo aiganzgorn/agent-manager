@@ -6,6 +6,6 @@
   "description": "Local web UI for browsing, editing and creating opencode V2 agents",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node frontmatter.test.mjs"
+    "test": "node frontmatter.test.mjs && node jsonc.test.mjs"
   }
 }

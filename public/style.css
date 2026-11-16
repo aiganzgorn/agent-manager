@@ -52,6 +52,14 @@ code { background: #120e0c; padding: 1px 5px; border-radius: 5px; color: #f3d9bf
 .brand-title { font-weight: 650; letter-spacing: .2px; }
 .brand-sub { color: var(--muted); font-size: 11.5px; }
 
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 0 12px 10px; }
+.tab {
+  background: #1e1814; border: 1px solid var(--line); color: var(--muted);
+  border-radius: 8px; padding: 6px 4px; font-size: 11.5px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { background: #2d221b; border-color: #57422f; color: var(--accent); font-weight: 600; }
+
 .rootbar { display: flex; gap: 6px; padding: 0 14px 12px; }
 .rootbar input {
   flex: 1; min-width: 0;
@@ -209,7 +217,7 @@ button.ghost.wide { width: 100%; }
   background: #0f0c0a; border: 1px solid #2b221c; border-radius: 9px;
   padding: 10px 12px; white-space: pre-wrap; font-size: 12px; color: #e6d6c8;
 }
-.card .no-prompt { color: #ac9a8d; font-size: 12.5px; background: #191411; border: 1px dashed #3d2f26; border-radius: 9px; padding: 10px 12px; }
+.card .no-prompt { white-space: pre-wrap; color: #ac9a8d; font-size: 12.5px; background: #191411; border: 1px dashed #3d2f26; border-radius: 9px; padding: 10px 12px; }
 .card .rules { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 .card .rule { font-size: 11px; background: #120e0c; border: 1px solid #2c221c; border-radius: 6px; padding: 2px 6px; color: #b3a094; }
 .card .rule.deny { color: #e0a0a0; border-color: #4a2c2c; }
@@ -224,6 +232,18 @@ button.ghost.wide { width: 100%; }
 }
 .preview-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #2b221c; font-size: 12px; color: var(--muted); }
 .preview pre { margin: 0; padding: 12px; overflow: auto; font-size: 12px; color: #e6d6c8; }
+
+/* ---- settings table ---- */
+
+.kv { display: grid; grid-template-columns: 190px minmax(0, 1fr) 84px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.kv .k { font-family: var(--mono); font-size: 12.5px; color: #e8d9cc; overflow: hidden; text-overflow: ellipsis; }
+.kv .k small { display: block; color: #7d675c; font-size: 10px; }
+.kv input { padding: 6px 9px; font-size: 12.5px; font-family: var(--mono); }
+.kv button { padding: 6px 10px; font-size: 12px; }
+.kv .ro { grid-column: 2 / 4; }
+.kv .ro pre { margin: 2px 0 0; max-height: 90px; overflow: auto; font-size: 11.5px; color: #b3a094; white-space: pre-wrap; }
+.kv.saved input { border-color: #3c553a; }
+@media (max-width: 720px) { .kv { grid-template-columns: 1fr; } }
 
 .toast {
   position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);

@@ -16,12 +16,21 @@ const KNOWN = [
 const BOOL_KEYS = ['hidden', 'disabled'];
 const NUMBER_KEYS = ['steps'];
 
-export function parseAgentFile(text) {
+// Every frontmatter key, parsed the same way; used for skills, whose keys are
+// different (name, description, allowed-tools, user-invocable).
+export function parseFrontmatter(text) {
+  const split = splitDocument(text);
+  const data = {};
+  for (const block of split.blocks) {
+    if (block.key) data[block.key] = parseValue(block);
+  }
+  return { data: data, body: split.body, hadFrontmatter: split.hadFrontmatter };
+}
+
+function splitDocument(text) {
   const src = String(text == null ? '' : text).replace(/\r\n/g, '\n');
   const lines = src.split('\n');
-  if (lines[0].trim() !== '---') {
-    return { fields: {}, extra: '', prompt: src.replace(/^\n+/, ''), hadFrontmatter: false };
-  }
+  if (lines[0].trim() !== '---') return { blocks: [], body: src.replace(/^\n+/, ''), hadFrontmatter: false };
   let close = -1;
   for (let i = 1; i < lines.length; i++) {
     if (lines[i].trim() === '---') {
@@ -29,26 +38,26 @@ export function parseAgentFile(text) {
       break;
     }
   }
-  if (close < 0) {
-    return { fields: {}, extra: '', prompt: src.replace(/^\n+/, ''), hadFrontmatter: false };
-  }
+  if (close < 0) return { blocks: [], body: src.replace(/^\n+/, ''), hadFrontmatter: false };
+  return {
+    blocks: splitBlocks(lines.slice(1, close)),
+    body: lines.slice(close + 1).join('\n').replace(/^\n+/, '').replace(/\s+$/, ''),
+    hadFrontmatter: true,
+  };
+}
 
+export function parseAgentFile(text) {
+  const split = splitDocument(text);
   const fields = {};
   let extra = '';
-  for (const block of splitBlocks(lines.slice(1, close))) {
+  for (const block of split.blocks) {
     if (!block.key || KNOWN.indexOf(block.key) < 0) {
       extra += block.raw + '\n';
       continue;
     }
     fields[block.key] = parseValue(block);
   }
-
-  const prompt = lines
-    .slice(close + 1)
-    .join('\n')
-    .replace(/^\n+/, '')
-    .replace(/\s+$/, '');
-  return { fields, extra, prompt, hadFrontmatter: true };
+  return { fields: fields, extra: extra, prompt: split.body, hadFrontmatter: split.hadFrontmatter };
 }
 
 function splitBlocks(fmLines) {

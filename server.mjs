@@ -7,7 +7,8 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import { parseAgentFile, stringifyAgentFile, V1_KEYS } from './frontmatter.mjs';
+import { parseAgentFile, parseFrontmatter, stringifyAgentFile, V1_KEYS } from './frontmatter.mjs';
+import { parseConfig, topLevelEntries, setTopLevelValue, valueKind, toLiteral } from './jsonc.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4737);
@@ -96,7 +97,7 @@ function configAgents(scopeDir) {
     if (!fs.existsSync(file)) continue;
     let doc;
     try {
-      doc = parseJsonc(fs.readFileSync(file, 'utf8'));
+      doc = parseConfig(fs.readFileSync(file, 'utf8'));
     } catch {
       continue;
     }
@@ -163,57 +164,15 @@ function buildState(root) {
     globalConfigAgents: configAgents(GLOBAL),
     configAgents: uniqueConfig,
     projects,
+    skills: {
+      global: collectSkills(path.join(GLOBAL, 'skills'), 'global', null),
+      projects: projects.map((p) => ({
+        id: p.id,
+        label: p.label,
+        skills: collectSkills(path.join(p.id, '.opencode', 'skills'), 'project', p.id),
+      })),
+    },
   };
-}
-
-function parseJsonc(text) {
-  let out = '';
-  let inStr = false;
-  let esc = false;
-  let inLine = false;
-  let inBlock = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    const n = text[i + 1];
-    if (inLine) {
-      if (c === '\n') {
-        inLine = false;
-        out += c;
-      }
-      continue;
-    }
-    if (inBlock) {
-      if (c === '*' && n === '/') {
-        inBlock = false;
-        i++;
-      }
-      continue;
-    }
-    if (inStr) {
-      out += c;
-      if (esc) esc = false;
-      else if (c === '\\') esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') {
-      inStr = true;
-      out += c;
-      continue;
-    }
-    if (c === '/' && n === '/') {
-      inLine = true;
-      continue;
-    }
-    if (c === '/' && n === '*') {
-      inBlock = true;
-      i++;
-      continue;
-    }
-    out += c;
-  }
-  out = out.replace(/,(\s*[}\]])/g, '$1');
-  return JSON.parse(out);
 }
 
 // ---- writes ----------------------------------------------------------------
@@ -247,6 +206,249 @@ function writeAtomic(file, text) {
 
 function validId(id) {
   return typeof id === 'string' && /^[a-z0-9][a-z0-9._-]*$/.test(id);
+}
+
+// ---- skills ----------------------------------------------------------------
+
+function collectSkills(skillsDir, scope, projectId) {
+  const out = [];
+  if (!isDir(skillsDir)) return out;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const dir = path.join(skillsDir, e.name);
+    const file = path.join(dir, 'SKILL.md');
+    if (!fs.existsSync(file)) continue;
+    let fm = { data: {}, body: '' };
+    try {
+      fm = parseFrontmatter(fs.readFileSync(file, 'utf8'));
+    } catch {}
+    const data = fm.data || {};
+    let files = [];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f !== 'SKILL.md');
+    } catch {}
+    out.push({
+      id: String(data.name || e.name),
+      dir: e.name,
+      description: String(data.description || ''),
+      userInvocable: String(data['user-invocable']) === 'true',
+      allowedTools: data['allowed-tools'] ? String(data['allowed-tools']) : '',
+      scope: scope,
+      projectId: projectId || null,
+      file: file,
+      body: fm.body || '',
+      files: files,
+    });
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// ---- plugins ---------------------------------------------------------------
+
+function pluginSpecs() {
+  const list = [];
+  for (const name of ['opencode.json', 'opencode.jsonc']) {
+    const file = path.join(GLOBAL, name);
+    if (!fs.existsSync(file)) continue;
+    let doc;
+    try {
+      doc = parseConfig(fs.readFileSync(file, 'utf8'));
+    } catch {
+      continue;
+    }
+    const plugins = Array.isArray(doc.plugin) ? doc.plugin : Array.isArray(doc.plugins) ? doc.plugins : [];
+    for (const p of plugins) {
+      const spec = typeof p === 'string' ? p : p && typeof p === 'object' ? p.package || p.packageName || '' : '';
+      if (spec) list.push({ spec: spec, options: p && typeof p === 'object' ? p.options : null, file: file });
+    }
+  }
+  return list;
+}
+
+const PACKAGES = path.join(HOME, '.cache', 'opencode', 'packages');
+
+function packageName(spec) {
+  const at = spec.lastIndexOf('@');
+  if (at > 0) return spec.slice(0, at);
+  return spec;
+}
+
+function readPkg(file) {
+  try {
+    const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return json.version ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+// git plugin clones keep the real package.json a few levels down
+function deepReadPkg(dir) {
+  const stack = [[dir, 0]];
+  while (stack.length) {
+    const item = stack.pop();
+    const cur = item[0];
+    const depth = item[1];
+    if (depth > 6) continue;
+    const direct = readPkg(path.join(cur, 'package.json'));
+    if (direct) return direct;
+    try {
+      for (const e of fs.readdirSync(cur, { withFileTypes: true })) {
+        if (!e.isDirectory() || e.name === '.git') continue;
+        stack.push([path.join(cur, e.name), depth + 1]);
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function findInstalled(name) {
+  const base = path.basename(name);
+  const parent = path.join(PACKAGES, path.dirname(name));
+  const candidates = [];
+  if (isDir(path.join(PACKAGES, name))) candidates.push(path.join(PACKAGES, name));
+  try {
+    for (const e of fs.readdirSync(parent)) {
+      if (e === base || e.indexOf(base + '@') === 0) candidates.push(path.join(parent, e));
+    }
+  } catch {}
+  let best = null;
+  for (const dir of candidates) {
+    // the install dir holds a wrapper package.json; the real one is nested,
+    // and git plugins are cloned under a host path instead of a package name
+    const pkg =
+      readPkg(path.join(dir, 'node_modules', name, 'package.json')) ||
+      readPkg(path.join(dir, 'package.json')) ||
+      deepReadPkg(dir);
+    if (!pkg) continue;
+    let mtimeMs = 0;
+    try {
+      mtimeMs = fs.statSync(dir).mtimeMs;
+    } catch {}
+    if (best && best.mtimeMs > mtimeMs) continue;
+    best = { dir: dir, mtimeMs: mtimeMs, version: pkg.version || '', description: pkg.description || '', name: pkg.name || name };
+  }
+  return best;
+}
+
+function collectPlugins() {
+  return pluginSpecs().map((p) => {
+    const name = packageName(p.spec);
+    return {
+      spec: p.spec,
+      name: name,
+      options: p.options,
+      file: p.file,
+      installed: findInstalled(name),
+    };
+  });
+}
+
+// ---- environment / settings ------------------------------------------------
+
+let versionCache = { at: 0, version: '' };
+
+function opencodeVersion() {
+  if (versionCache.version && Date.now() - versionCache.at < 300000) return Promise.resolve(versionCache.version);
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(process.env.OPENCODE_BIN || 'opencode', ['--version']);
+    } catch {
+      return resolve('');
+    }
+    let out = '';
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+      resolve('');
+    }, 8000);
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', () => {});
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve('');
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const text = out.trim().split('\n')[0];
+      versionCache = { at: Date.now(), version: text };
+      resolve(text);
+    });
+  });
+}
+
+function configFiles(root) {
+  const list = [];
+  for (const name of ['opencode.json', 'opencode.jsonc']) {
+    const file = path.join(GLOBAL, name);
+    if (fs.existsSync(file)) list.push({ path: file, scope: 'global', projectId: null });
+  }
+  for (const dir of projectDirs(root)) {
+    for (const name of ['opencode.json', 'opencode.jsonc']) {
+      for (const file of [path.join(dir, name), path.join(dir, '.opencode', name)]) {
+        if (fs.existsSync(file)) list.push({ path: file, scope: 'project', projectId: dir });
+      }
+    }
+  }
+  return list;
+}
+
+function settingsPayload(root) {
+  const files = configFiles(root).map((f) => {
+    const text = fs.readFileSync(f.path, 'utf8');
+    let entries = [];
+    let error = '';
+    try {
+      const parsed = parseConfig(text);
+      entries = topLevelEntries(text).map((e) => ({
+        key: e.key,
+        value: e.value,
+        kind: valueKind(e.value),
+        parsed: parsed[e.key] === undefined ? null : parsed[e.key],
+      }));
+    } catch (e) {
+      error = e.message;
+    }
+    return { path: f.path, scope: f.scope, projectId: f.projectId, entries: entries, error: error, text: text.length < 20000 ? text : text.slice(0, 20000) + '\n…' };
+  });
+  return { files: files, globalDir: GLOBAL };
+}
+
+function setSetting(root, file, key, value) {
+  const files = configFiles(root);
+  const allowed = files.filter((f) => path.resolve(f.path) === path.resolve(String(file || '')))[0];
+  if (!allowed) throw err(403, 'Это не найденный файл конфигурации opencode.');
+  if (!/^[A-Za-z_$][A-Za-z0-9_$.]*$/.test(String(key || ''))) throw err(400, 'Некорректное имя настройки.');
+  if (typeof value === 'object' && value !== null) throw err(400, 'Значение должно быть строкой, числом или флагом.');
+  const text = fs.readFileSync(allowed.path, 'utf8');
+  let before;
+  try {
+    before = parseConfig(text);
+  } catch (e) {
+    throw err(409, 'Файл сейчас не парсится (' + e.message + '), поэтому не трогаю его.');
+  }
+  const patched = setTopLevelValue(text, key, toLiteral(value));
+  let after;
+  try {
+    after = parseConfig(patched);
+  } catch (e) {
+    throw err(409, 'Правка сделала файл невалидным, не записала: ' + e.message);
+  }
+  for (const k of Object.keys(before)) {
+    if (k === key) continue;
+    if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) throw err(409, 'Правка затронула соседнюю настройку ' + k + ', отменила.');
+  }
+  if (JSON.stringify(after[key]) !== JSON.stringify(value)) throw err(409, 'Значение не совпало с ожидаемым, отменила.');
+  writeAtomic(allowed.path, patched);
+  return { file: allowed.path, key: key, value: after[key] };
 }
 
 // ---- http ------------------------------------------------------------------
@@ -411,6 +613,21 @@ const server = http.createServer(async (req, res) => {
         if (insideAny(file, dirs) && fs.existsSync(file)) extra = parseAgentFile(fs.readFileSync(file, 'utf8')).extra;
       }
       return send(res, 200, { text: stringifyAgentFile(payload.fields || {}, extra, payload.prompt || '') });
+    }
+    if (url.pathname === '/api/plugins') {
+      return send(res, 200, { plugins: collectPlugins(), packagesDir: PACKAGES, config: configFiles(path.resolve(url.searchParams.get('root') || ROOT_DEFAULT)).filter((f) => f.scope === 'global') });
+    }
+    if (url.pathname === '/api/settings') {
+      const root = path.resolve(url.searchParams.get('root') || ROOT_DEFAULT);
+      const payload = settingsPayload(root);
+      payload.version = await opencodeVersion();
+      payload.root = root;
+      return send(res, 200, payload);
+    }
+    if (url.pathname === '/api/settings/set' && req.method === 'POST') {
+      const payload = await readBody(req);
+      const root = path.resolve(String(payload.root || ROOT_DEFAULT));
+      return send(res, 200, setSetting(root, payload.file, payload.key, payload.value));
     }
     if (url.pathname === '/api/resolved') {
       if (url.searchParams.get('fresh')) resolvedCache = { at: 0, agents: null };
